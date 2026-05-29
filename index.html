@@ -1,1 +1,358 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>3D Hyper-Racer: Nitro Boost</title>
+    <style>
+        body { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: 'Montserrat', sans-serif; }
+        canvas { display: block; }
+        
+        #hud {
+            position: absolute;
+            top: 20px;
+            left: 20px;
+            color: #fff;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 10px 20px;
+            border-radius: 8px;
+            pointer-events: none;
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            text-shadow: 0 0 5px #000;
+        }
+        #scoreValue { font-size: 2em; font-weight: bold; color: #00ffff; }
+        #speedVal { color: #fff; font-size: 1.2em;}
+        #nitroActive { color: #ff0055; font-weight: bold; display: none; margin-top: 5px;}
 
+        #controls {
+            position: absolute;
+            bottom: 20px;
+            left: 50%;
+            transform: translateX(-50%);
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 0.9em;
+            text-align: center;
+            background: rgba(0, 0, 0, 0.5);
+            padding: 5px 15px;
+            border-radius: 15px;
+        }
+
+        #gameOver {
+            display: none;
+            position: absolute;
+            top: 50%;
+            left: 50%;
+            transform: translate(-50%, -50%);
+            color: #fff;
+            text-align: center;
+            background: rgba(10, 10, 10, 0.9);
+            padding: 40px;
+            border-radius: 15px;
+            border: 2px solid #ff0055;
+            box-shadow: 0 0 30px rgba(255, 0, 85, 0.5);
+        }
+        #gameOver h1 { color: #ff0055; font-size: 3em; margin-bottom: 0; }
+        #gameOver p { font-size: 1.2em; margin-top: 10px; }
+        #resetBtn {
+            margin-top: 20px;
+            padding: 12px 30px;
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #fff;
+            background: #ff0055;
+            border: none;
+            border-radius: 5px;
+            cursor: pointer;
+            transition: background 0.2s;
+        }
+        #resetBtn:hover { background: #ff3377; }
+    </style>
+</head>
+<body>
+
+<div id="hud">
+    <div>Score: <span id="scoreValue">0</span></div>
+    <div>Speed: <span id="speedVal">180</span> KM/H</div>
+    <div id="nitroActive">NITRO BOOST ACTIVE!</div>
+</div>
+
+<div id="controls">Use A/D to steer, Hold W for Nitro Boost</div>
+
+<div id="gameOver">
+    <h1>CRASHED!</h1>
+    <p>Final Score: <span id="finalScore">0</span></p>
+    <button id="resetBtn" onclick="resetGame()">Try Again</button>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+
+<script>
+    let scene, camera, renderer, playerCar, road, clock;
+    let enemies = [];
+    let isGameOver = false;
+    let isBoosting = false;
+    let baseSpeed = 1.0;
+    let speed = baseSpeed;
+    let score = 0;
+    const laneWidth = 4;
+    const currentLanes = [-laneWidth, 0, laneWidth];
+    let playerLane = 1; // 0=left, 1=center, 2=right
+
+    const keys = { a: false, d: false, w: false };
+
+    init();
+    animate();
+
+    function init() {
+        // --- Core Scene Setup ---
+        scene = new THREE.Scene();
+        scene.fog = new THREE.FogExp2(0x000000, 0.015);
+
+        camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        camera.position.set(0, 3, 10); // Elevated, behind-the-car view
+        camera.lookAt(0, 1, 0);
+
+        renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.setPixelRatio(window.devicePixelRatio);
+        document.body.appendChild(renderer.domElement);
+
+        clock = new THREE.Clock();
+
+        // --- Lights (High Graphics) ---
+        const ambientLight = new THREE.AmbientLight(0x404040, 1.5);
+        scene.add(ambientLight);
+
+        const overheadLight = new THREE.DirectionalLight(0xffffff, 1);
+        overheadLight.position.set(0, 10, 5);
+        scene.add(overheadLight);
+
+        // --- Create Environment (Neon Tunnel) ---
+        createInfiniteEnvironment();
+
+        // --- Create Player Vehicle (High Graphics) ---
+        playerCar = createAdvancedCar(0x00ffff); // Metallic Cyan
+        playerCar.position.x = currentLanes[playerLane];
+        scene.add(playerCar);
+
+        // --- Add Enemies ---
+        for (let i = 0; i < 4; i++) {
+            spawnEnemy(i * 40 - 100);
+        }
+
+        // --- Input Listeners ---
+        window.addEventListener('keydown', (e) => {
+            if (isGameOver) return;
+            if (e.key.toLowerCase() === 'a' && playerLane > 0) playerLane--;
+            if (e.key.toLowerCase() === 'd' && playerLane < 2) playerLane++;
+            if (e.key.toLowerCase() === 'w') isBoosting = true;
+        });
+
+        window.addEventListener('keyup', (e) => {
+            if (e.key.toLowerCase() === 'w') isBoosting = false;
+        });
+
+        window.addEventListener('resize', onWindowResize);
+    }
+
+    // --- High Graphics Vehicle Model Function ---
+    function createAdvancedCar(color) {
+        const car = new THREE.Group();
+
+        // Main body (sleeker, more complex geometry)
+        const bodyGeom = new THREE.BoxGeometry(2.2, 0.6, 4.5);
+        const bodyMat = new THREE.MeshPhongMaterial({ color: color, specular: 0xffffff, shininess: 100 });
+        const body = new THREE.Mesh(bodyGeom, bodyMat);
+        body.position.y = 0.6;
+        car.add(body);
+
+        // Cabin/Cockpit
+        const cabinGeom = new THREE.BoxGeometry(1.6, 0.5, 2.0);
+        const cabinMat = new THREE.MeshPhongMaterial({ color: 0x111111, specular: 0xaaaaaa, shininess: 150 });
+        const cabin = new THREE.Mesh(cabinGeom, cabinMat);
+        cabin.position.set(0, 1.1, 0.1);
+        car.add(cabin);
+
+        // Spoiler
+        const spoilerGeom = new THREE.BoxGeometry(2.4, 0.1, 0.6);
+        const spoilerMat = new THREE.MeshPhongMaterial({ color: 0x000000 });
+        const spoiler = new THREE.Mesh(spoilerGeom, spoilerMat);
+        spoiler.position.set(0, 1.2, -1.9);
+        car.add(spoiler);
+
+        // Wheels
+        const wheelGeom = new THREE.CylinderGeometry(0.4, 0.4, 0.3, 16);
+        wheelGeom.rotateZ(Math.PI / 2);
+        const wheelMat = new THREE.MeshPhongMaterial({ color: 0x222222 });
+        
+        const wheelPositions = [
+            [-1.1, 0.4, 1.5], [1.1, 0.4, 1.5], // Front
+            [-1.1, 0.4, -1.5], [1.1, 0.4, -1.5] // Back
+        ];
+        
+        wheelPositions.forEach(pos => {
+            const wheel = new THREE.Mesh(wheelGeom, wheelMat);
+            wheel.position.set(...pos);
+            car.add(wheel);
+        });
+
+        // Headlights (If player car)
+        if (color === 0x00ffff) {
+            const lightGeom = new THREE.BoxGeometry(0.3, 0.2, 0.1);
+            const lightMat = new THREE.MeshBasicMaterial({ color: 0xffffff });
+            const leftHeadlight = new THREE.Mesh(lightGeom, lightMat);
+            leftHeadlight.position.set(-0.8, 0.6, 2.26);
+            const rightHeadlight = new THREE.Mesh(lightGeom, lightMat);
+            rightHeadlight.position.set(0.8, 0.6, 2.26);
+            car.add(leftHeadlight, rightHeadlight);
+        }
+
+        return car;
+    }
+
+    function createInfiniteEnvironment() {
+        // Road surface (Grid for high speed perception)
+        const roadGeom = new THREE.PlaneGeometry(20, 2000, 1, 100);
+        const roadMat = new THREE.MeshPhongMaterial({ 
+            color: 0x101015,
+            emissive: 0x050510,
+            specular: 0x222222,
+            shininess: 10,
+        });
+        road = new THREE.Mesh(roadGeom, roadMat);
+        road.rotation.x = -Math.PI / 2;
+        road.position.z = -500;
+        scene.add(road);
+
+        const gridHelper = new THREE.GridHelper(2000, 200, 0x00ffff, 0x222244);
+        gridHelper.position.y = 0.05;
+        gridHelper.position.z = -500;
+        scene.add(gridHelper);
+
+        // Add side walls with neon glowing lines
+        const wallGeom = new THREE.BoxGeometry(1, 10, 2000);
+        const wallMat = new THREE.MeshPhongMaterial({ color: 0x050505, emissive: 0x0a0a20 });
+        
+        const leftWall = new THREE.Mesh(wallGeom, wallMat);
+        leftWall.position.set(-10.5, 5, -500);
+        scene.add(leftWall);
+
+        const rightWall = new THREE.Mesh(wallGeom, wallMat);
+        rightWall.position.set(10.5, 5, -500);
+        scene.add(rightWall);
+
+        // Side neon lights
+        for (let z = 0; z > -1000; z -= 50) {
+            const lightGeom = new THREE.CylinderGeometry(0.1, 0.1, 40, 8);
+            lightGeom.rotateZ(Math.PI/2);
+            const lightMat = new THREE.MeshBasicMaterial({ color: Math.random() > 0.5 ? 0xff00ff : 0x00ffff });
+            const lightRow = new THREE.Mesh(lightGeom, lightMat);
+            lightRow.position.set(0, 9.8, z);
+            scene.add(lightRow);
+        }
+    }
+
+    function spawnEnemy(zPos) {
+        const colors = [0xff1111, 0x11ff11, 0x1111ff, 0xffaa00];
+        const randomColor = colors[Math.floor(Math.random() * colors.length)];
+        const enemy = createAdvancedCar(randomColor);
+        enemy.position.z = zPos;
+        enemy.position.x = currentLanes[Math.floor(Math.random() * 3)];
+        enemies.push(enemy);
+        scene.add(enemy);
+    }
+
+    function animate() {
+        if (isGameOver) return;
+        requestAnimationFrame(animate);
+
+        const deltaTime = clock.getDelta();
+
+        // --- Speed Boost (Nitro) System ---
+        if (isBoosting) {
+            speed = THREE.MathUtils.lerp(speed, baseSpeed * 2.5, deltaTime * 5); // Rapid Acceleration
+            camera.fov = THREE.MathUtils.lerp(camera.fov, 95, deltaTime * 4); // FOV widen for speed effect
+            camera.updateProjectionMatrix();
+            document.getElementById('nitroActive').style.display = 'block';
+            document.getElementById('speedVal').innerText = Math.floor(180 * (speed/baseSpeed));
+            score += Math.floor(200 * deltaTime); // Higher score while boosting
+        } else {
+            speed = THREE.MathUtils.lerp(speed, baseSpeed, deltaTime * 2); // Gradual deceleration
+            camera.fov = THREE.MathUtils.lerp(camera.fov, 75, deltaTime * 3); // FOV back to normal
+            camera.updateProjectionMatrix();
+            document.getElementById('nitroActive').style.display = 'none';
+            document.getElementById('speedVal').innerText = Math.floor(180 * (speed/baseSpeed));
+            score += Math.floor(50 * deltaTime); // Normal score rate
+        }
+        document.getElementById('scoreValue').innerText = score;
+
+        // --- Environment Movement ---
+        road.position.z += speed;
+        if (road.position.z > 500) road.position.z = -500; // Loop road
+
+        // --- Player Movement (Smooth Transition) ---
+        const targetX = currentLanes[playerLane];
+        playerCar.position.x = THREE.MathUtils.lerp(playerCar.position.x, targetX, deltaTime * 10);
+
+        // --- Enemy Movement & Collision ---
+        enemies.forEach(enemy => {
+            enemy.position.z += speed * 0.8; // Enemies move slower than background
+
+            // Collision Detection (Precise 3D bounding box logic)
+            const playerBox = new THREE.Box3().setFromObject(playerCar);
+            const enemyBox = new THREE.Box3().setFromObject(enemy);
+
+            if (playerBox.intersectsBox(enemyBox)) {
+                endGame();
+            }
+
+            // Respawn enemy if it goes behind player
+            if (enemy.position.z > 15) {
+                enemy.position.z = -160 - (Math.random() * 40);
+                enemy.position.x = currentLanes[Math.floor(Math.random() * 3)];
+                
+                // Difficulty Increase over time
+                if(score > 1000) baseSpeed = 1.2;
+                if(score > 3000) baseSpeed = 1.4;
+                if(score > 6000) baseSpeed = 1.6;
+            }
+        });
+
+        renderer.render(scene, camera);
+    }
+
+    function endGame() {
+        isGameOver = true;
+        document.getElementById('gameOver').style.display = 'block';
+        document.getElementById('finalScore').innerText = score;
+        clock.stop();
+    }
+
+    function resetGame() {
+        // Reset state
+        isGameOver = false;
+        score = 0;
+        baseSpeed = 1.0;
+        speed = baseSpeed;
+        playerLane = 1;
+        playerCar.position.x = currentLanes[playerLane];
+        document.getElementById('gameOver').style.display = 'none';
+
+        // Reposition enemies
+        enemies.forEach((enemy, i) => {
+            enemy.position.z = i * 40 - 100;
+            enemy.position.x = currentLanes[Math.floor(Math.random() * 3)];
+        });
+
+        clock.start();
+        animate(); // Restart loop
+    }
+
+    function onWindowResize() {
+        camera.aspect = window.innerWidth / window.innerHeight;
+        camera.updateProjectionMatrix();
+        renderer.setSize(window.innerWidth, window.innerHeight);
+    }
+</script>
+</body>
+</html>
