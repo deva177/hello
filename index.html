@@ -1,1 +1,361 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced 3D Minecraft: Physics & Textures</title>
+    <style>
+        body { margin: 0; overflow: hidden; font-family: sans-serif; background-color: #87CEEB; user-select: none; }
+        #crosshair {
+            position: absolute; top: 50%; left: 50%;
+            width: 10px; height: 10px;
+            transform: translate(-50%, -50%);
+            color: white; font-size: 24px; font-weight: bold;
+            pointer-events: none; z-index: 10;
+        }
+        #ui-container {
+            position: absolute; top: 10px; left: 10px;
+            color: white; background: rgba(0,0,0,0.7);
+            padding: 15px; border-radius: 6px; pointer-events: none;
+        }
+        h3 { margin: 0 0 5px 0; font-size: 16px; color: #5cc431; }
+        p { margin: 3px 0; font-size: 13px; }
+        #hotbar {
+            position: absolute; bottom: 20px; left: 50%;
+            transform: translateX(-50%); display: flex;
+            background: rgba(0,0,0,0.6); padding: 6px;
+            border-radius: 5px; gap: 8px;
+        }
+        .slot {
+            width: 55px; height: 55px; border: 3px solid #444;
+            display: flex; flex-direction: column; justify-content: center;
+            align-items: center; color: white; font-weight: bold;
+            font-size: 11px; border-radius: 4px; text-shadow: 1px 1px 2px black;
+        }
+        .slot.active { border-color: #fff; box-shadow: 0 0 12px #fff; }
+    </style>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/three@0.128.0/examples/js/controls/PointerLockControls.js"></script>
+</head>
+<body>
 
+    <div id="crosshair">+</div>
+    
+    <div id="ui-container">
+        <h3>Advanced Edition</h3>
+        <p><strong>Click Screen:</strong> Lock Mouse & Play</p>
+        <p><strong>Move:</strong> W, A, S, D</p>
+        <p><strong>Jump:</strong> Spacebar</p>
+        <p><strong>Left Click:</strong> Destroy Block</p>
+        <p><strong>Right Click:</strong> Place Block</p>
+        <p><strong>1 - 5:</strong> Change Block</p>
+    </div>
+
+    <div id="hotbar">
+        <div class="slot active" id="s1">Grass</div>
+        <div class="slot" id="s2">Dirt</div>
+        <div class="slot" id="s3">Stone</div>
+        <div class="slot" id="s4">Wood</div>
+        <div class="slot" id="s5">Leaves</div>
+    </div>
+
+    <script>
+        // --- 1. INITIAL SCENE SETUP ---
+        const scene = new THREE.Scene();
+        scene.background = new THREE.Color(0x87CEEB);
+        scene.fog = new THREE.FogExp2(0x87CEEB, 0.015);
+
+        const camera = new THREE.PerspectiveCamera(75, window.innerWidth / window.innerHeight, 0.1, 1000);
+        const renderer = new THREE.WebGLRenderer({ antialias: true });
+        renderer.setSize(window.innerWidth, window.innerHeight);
+        renderer.shadowMap.enabled = true;
+        document.body.appendChild(renderer.domElement);
+
+        // --- 2. LIGHTING ---
+        const ambientLight = new THREE.AmbientLight(0xffffff, 0.5);
+        scene.add(ambientLight);
+        const sunLight = new THREE.DirectionalLight(0xffffff, 0.75);
+        sunLight.position.set(40, 80, 40);
+        scene.add(sunLight);
+
+        // --- 3. PROCEDURAL TEXTURE GENERATOR ---
+        function createMinecraftTexture(baseColor, noiseFactor, isGrass = false) {
+            const canvas = document.createElement('canvas');
+            canvas.width = 16;
+            canvas.height = 16;
+            const ctx = canvas.getContext('2d');
+            
+            const base = new THREE.Color(baseColor);
+
+            for (let x = 0; x < 16; x++) {
+                for (let y = 0; y < 16; y++) {
+                    let c = base.clone();
+                    // Add random procedural noise variation
+                    let noise = (Math.random() - 0.5) * noiseFactor;
+                    
+                    // Specific logic for stylized top-grass border simulation
+                    if (isGrass && y < 4) {
+                        c.setHex(0x5cc431); 
+                        noise = (Math.random() - 0.5) * 0.1;
+                    }
+
+                    c.r = Math.max(0, Math.min(1, c.r + noise));
+                    c.g = Math.max(0, Math.min(1, c.g + noise));
+                    c.b = Math.max(0, Math.min(1, c.b + noise));
+
+                    ctx.fillStyle = c.getStyle();
+                    ctx.fillRect(x, y, 1, 1);
+                }
+            }
+            
+            const texture = new THREE.CanvasTexture(canvas);
+            texture.magFilter = THREE.NearestFilter; // Clean retro pixels
+            texture.minFilter = THREE.NearestFilter;
+            return texture;
+        }
+
+        // Generate Textures
+        const texGrassSide = createMinecraftTexture(0x8B5A2B, 0.15, true);
+        const texGrassTop = createMinecraftTexture(0x5cc431, 0.15);
+        const texDirt = createMinecraftTexture(0x8B5A2B, 0.15);
+        const texStone = createMinecraftTexture(0x737373, 0.2);
+        const texWood = createMinecraftTexture(0x8A5A36, 0.1);
+        const texLeaves = createMinecraftTexture(0x2E8B57, 0.3);
+
+        // Material Definitions
+        const materials = {
+            grass: [
+                new THREE.MeshStandardMaterial({ map: texGrassSide }), // Right
+                new THREE.MeshStandardMaterial({ map: texGrassSide }), // Left
+                new THREE.MeshStandardMaterial({ map: texGrassTop }),  // Top
+                new THREE.MeshStandardMaterial({ map: texDirt }),      // Bottom
+                new THREE.MeshStandardMaterial({ map: texGrassSide }), // Front
+                new THREE.MeshStandardMaterial({ map: texGrassSide })  // Back
+            ],
+            dirt: new THREE.MeshStandardMaterial({ map: texDirt }),
+            stone: new THREE.MeshStandardMaterial({ map: texStone }),
+            wood: new THREE.MeshStandardMaterial({ map: texWood }),
+            leaves: new THREE.MeshStandardMaterial({ map: texLeaves })
+        };
+
+        // --- 4. PLAYER PHYSICS & MOVEMENT VARIABLES ---
+        const BLOCK_SIZE = 2;
+        const playerRadius = 0.6;
+        const playerHeight = 1.8;
+        
+        let moveForward = false, moveBackward = false, moveLeft = false, moveRight = false;
+        let canJump = false;
+
+        const velocity = new THREE.Vector3();
+        const direction = new THREE.Vector3();
+        const objects = []; // Holds physical block meshes
+
+        const controls = new THREE.PointerLockControls(camera, document.body);
+        document.body.addEventListener('click', () => controls.lock());
+
+        document.addEventListener('keydown', (e) => {
+            switch (e.code) {
+                case 'KeyW': moveForward = true; break;
+                case 'KeyA': moveLeft = true; break;
+                case 'KeyS': moveBackward = true; break;
+                case 'KeyD': moveRight = true; break;
+                case 'Space': if (canJump) velocity.y += 18; canJump = false; break;
+                case 'Digit1': selectSlot(1, 'grass'); break;
+                case 'Digit2': selectSlot(2, 'dirt'); break;
+                case 'Digit3': selectSlot(3, 'stone'); break;
+                case 'Digit4': selectSlot(4, 'wood'); break;
+                case 'Digit5': selectSlot(5, 'leaves'); break;
+            }
+        });
+
+        document.addEventListener('keyup', (e) => {
+            switch (e.code) {
+                case 'KeyW': moveForward = false; break;
+                case 'KeyA': moveLeft = false; break;
+                case 'KeyS': moveBackward = false; break;
+                case 'KeyD': moveRight = false; break;
+            }
+        });
+
+        let activeMatString = 'grass';
+        function selectSlot(index, matKey) {
+            document.querySelectorAll('.slot').forEach(s => s.classList.remove('active'));
+            document.getElementById('s' + index).classList.add('active');
+            activeMatString = matKey;
+        }
+
+        // --- 5. WORLD GENERATION ---
+        const geometry = new THREE.BoxGeometry(BLOCK_SIZE, BLOCK_SIZE, BLOCK_SIZE);
+        const worldSize = 24;
+
+        function createBlock(x, y, z, matType) {
+            const mat = Array.isArray(materials[matType]) ? materials[matType] : materials[matType];
+            const mesh = new THREE.Mesh(geometry, mat);
+            mesh.position.set(x, y, z);
+            mesh.name = matType;
+            scene.add(mesh);
+            objects.push(mesh);
+        }
+
+        // Map Gen Loop
+        for (let x = -worldSize/2; x < worldSize/2; x++) {
+            for (let z = -worldSize/2; z < worldSize/2; z++) {
+                let height = Math.floor(Math.sin(x * 0.15) * Math.cos(z * 0.15) * 2);
+                
+                createBlock(x * BLOCK_SIZE, (height - 2) * BLOCK_SIZE, z * BLOCK_SIZE, 'stone');
+                createBlock(x * BLOCK_SIZE, (height - 1) * BLOCK_SIZE, z * BLOCK_SIZE, 'dirt');
+                createBlock(x * BLOCK_SIZE, height * BLOCK_SIZE, z * BLOCK_SIZE, 'grass');
+            }
+        }
+
+        // Set Camera Start Location
+        camera.position.set(0, 10, 10);
+
+        // --- 6. INTERACTION (MINING & BUILDING) ---
+        const raycaster = new THREE.Raycaster();
+        const mouse = new THREE.Vector2(0, 0);
+
+        document.addEventListener('pointerdown', (e) => {
+            if (!controls.isLocked) return;
+
+            raycaster.setFromCamera(mouse, camera);
+            const intersects = raycaster.intersectObjects(objects);
+
+            if (intersects.length > 0 && intersects[0].distance < 12) {
+                const intersect = intersects[0];
+
+                if (e.button === 0) { // Left Click: Destroy
+                    scene.remove(intersect.object);
+                    const idx = objects.indexOf(intersect.object);
+                    if (idx > -1) objects.splice(idx, 1);
+                } 
+                else if (e.button === 2) { // Right Click: Build
+                    const buildPos = new THREE.Vector3();
+                    buildPos.copy(intersect.object.position).addScaledVector(intersect.face.normal, BLOCK_SIZE);
+                    
+                    // Simple check to avoid placing a block inside yourself
+                    const pPos = camera.position;
+                    if (Math.abs(buildPos.x - pPos.x) < BLOCK_SIZE && 
+                        pPos.y - buildPos.y < BLOCK_SIZE && buildPos.y - pPos.y < 1) {
+                        return; 
+                    }
+                    createBlock(buildPos.x, buildPos.y, buildPos.z, activeMatString);
+                }
+            }
+        });
+        document.addEventListener('contextmenu', e => e.preventDefault());
+
+        // --- 7. AABB PLAYER COLLISION SYSTEM ---
+        function checkCollisions(position, velocity, delta) {
+            // Apply potential movement vector
+            let targetX = position.x + velocity.x * delta;
+            let targetY = position.y + velocity.y * delta;
+            let targetZ = position.z + velocity.z * delta;
+
+            canJump = false;
+
+            // Loop through all physical environmental objects
+            for (let i = 0; i < objects.length; i++) {
+                const b = objects[i].position;
+
+                // Simple Box vs Player Collision Check Extensions
+                const withinX = targetX + playerRadius > b.x - BLOCK_SIZE/2 && targetX - playerRadius < b.x + BLOCK_SIZE/2;
+                const withinZ = targetZ + playerRadius > b.z - BLOCK_SIZE/2 && targetZ - playerRadius < b.z + BLOCK_SIZE/2;
+                const withinY = targetY + 0.2 > b.y - BLOCK_SIZE/2 && targetY - playerHeight < b.y + BLOCK_SIZE/2;
+
+                if (withinX && withinY && withinZ) {
+                    // Y-Axis Wall Boundary Resolution (Floor / Ceiling)
+                    if (position.x + playerRadius > b.x - BLOCK_SIZE/2 && position.z + playerRadius > b.z - BLOCK_SIZE/2 &&
+                        position.x - playerRadius < b.x + BLOCK_SIZE/2 && position.z - playerRadius < b.z + BLOCK_SIZE/2) {
+                        
+                        if (velocity.y < 0 && targetY - playerHeight <= b.y + BLOCK_SIZE/2) {
+                            velocity.y = 0;
+                            targetY = b.y + BLOCK_SIZE/2 + playerHeight;
+                            canJump = true;
+                        } else if (velocity.y > 0 && targetY >= b.y - BLOCK_SIZE/2) {
+                            velocity.y = 0;
+                            targetY = b.y - BLOCK_SIZE/2 - 0.2;
+                        }
+                    }
+                    
+                    // X & Z Sliding Axis Collision Corrections
+                    if (position.y + 0.2 > b.y - BLOCK_SIZE/2 && position.y - playerHeight < b.y + BLOCK_SIZE/2) {
+                        if (withinZ && !withinX) velocity.x = 0;
+                        if (withinX && !withinZ) velocity.z = 0;
+                    }
+                }
+            }
+        }
+
+        // --- 8. RENDERING LOOP & GAME TICK ---
+        const clock = new THREE.Clock();
+        const gravity = 48.0;
+
+        function animate() {
+            requestAnimationFrame(animate);
+
+            if (controls.isLocked) {
+                const delta = Math.min(clock.getDelta(), 0.1); // Cap frame drops
+
+                // Horizontal movement friction damping
+                velocity.x -= velocity.x * 10.0 * delta;
+                velocity.z -= velocity.z * 10.0 * delta;
+                // Gravity acceleration
+                velocity.y -= gravity * delta; 
+
+                direction.z = Number(moveForward) - Number(moveBackward);
+                direction.x = Number(moveRight) - Number(moveLeft);
+                direction.normalize();
+
+                // Assign speed constants
+                const speed = 65.0;
+                if (moveForward || moveBackward) velocity.z -= direction.z * speed * delta;
+                if (moveLeft || moveRight) velocity.x -= direction.x * speed * delta;
+
+                // Translate target direction calculations relative to local player orientation vectors
+                const camDir = new THREE.Vector3();
+                camera.getWorldDirection(camDir);
+                
+                // Process physical vectors
+                const moveVector = new THREE.Vector3();
+                if (moveForward || moveBackward) moveVector.z = velocity.z;
+                if (moveLeft || moveRight) moveVector.x = velocity.x;
+                
+                // Route local controls matrix transform manually to decouple camera orientation looking up/down from horizontal moving constraints
+                const sideVector = new THREE.Vector3().setFromMatrixColumn(camera.matrix, 0);
+                const forwardVector = new THREE.Vector3().crossVectors(sideVector, camera.up).normalize();
+
+                const finalVelocity = new THREE.Vector3()
+                    .addScaledVector(sideVector, velocity.x)
+                    .addScaledVector(forwardVector, -velocity.z);
+                
+                finalVelocity.y = velocity.y;
+
+                // Check collisions and modify vector objects dynamically
+                checkCollisions(camera.position, finalVelocity, delta);
+
+                // Update Camera Coordinates safely
+                camera.position.x += finalVelocity.x * delta;
+                camera.position.y += finalVelocity.y * delta;
+                camera.position.z += finalVelocity.z * delta;
+
+                // Stop bottomless void falls
+                if (camera.position.y < -30) {
+                    camera.position.set(0, 15, 0);
+                    velocity.set(0, 0, 0);
+                }
+            }
+
+            renderer.render(scene, camera);
+        }
+
+        window.addEventListener('resize', () => {
+            camera.aspect = window.innerWidth / window.innerHeight;
+            camera.updateProjectionMatrix();
+            renderer.setSize(window.innerWidth, window.innerHeight);
+        });
+
+        animate();
+    </script>
+</body>
+</html>
